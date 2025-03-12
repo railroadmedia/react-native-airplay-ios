@@ -1,92 +1,129 @@
 import Foundation
 import UIKit
-import MediaPlayer
+import AVFoundation
+import AVKit
 
 @objc(RNAirView) 
-public class RNAirView:UIView {
-    var _volumeView: MPVolumeView? = nil
+public class RNAirView: UIView {
+    var routePickerView: AVRoutePickerView?
     var source: Dictionary<String, String>?
+    
+    // Track the parent size to know when to resize
+    private var lastSize: CGSize = .zero
 
     @objc public func setSource(_ source: Dictionary<String, String>) {
         self.source = source
-        let normal = source["normal"]
-        let highlighted = source["highlighted"]
-        let selected = source["selected"]
-        let focused = source["focused"]
-        let disabled = source["disabled"]
-        let rawImageRenderingMode = source["imageRenderingMode"]
-
-        if let vv = self._volumeView {
-            if let normalImage = self.getImage(source: normal) {
-                vv.setRouteButtonImage(normalImage, for: .normal)
-            }
-            if let highlightedImage = self.getImage(source: highlighted) {
-                vv.setRouteButtonImage(highlightedImage, for: .highlighted)
-            }
-            if let selectedImage = self.getImage(source: selected) {
-                vv.setRouteButtonImage(selectedImage, for: .selected)
-            }
-            if let focusedImage = self.getImage(source: focused) {
-                if #available(iOS 9.0, *) {
-                    vv.setRouteButtonImage(focusedImage, for: .focused)
-                }
-            }
-            if let disabledImage = self.getImage(source: disabled) {
-                vv.setRouteButtonImage(disabledImage, for: .disabled)
+        
+        configureRoutePickerView(tintColor: UIColor.white)
+    }
+    
+    // Configure the AVRoutePickerView
+    private func configureRoutePickerView(tintColor: UIColor) {
+        if #available(iOS 11.0, *), let picker = routePickerView {
+            picker.tintColor = tintColor
+            picker.activeTintColor = UIColor.systemBlue
+            
+            // Force layout and then resize icon
+            layoutIfNeeded()
+        }
+    }
+    
+    // Recursively find the UIButton in subviews
+    private func findButton(in view: UIView) -> UIButton? {
+        if let button = view as? UIButton {
+            return button
+        }
+        
+        for subview in view.subviews {
+            if let button = findButton(in: subview) {
+                return button
             }
         }
         
-        if rawImageRenderingMode == "always-template" {
-            let imageRenderingMode = rawImageRenderingMode == "always-template"
-                ? UIImage.RenderingMode.alwaysTemplate
-                : rawImageRenderingMode == "always-original"
-                ? .alwaysOriginal
-                : .automatic
-            for view in self._volumeView?.subviews ?? [] {
-                if let buttonOnVolumeView = view as? UIButton {
-                    self._volumeView?.setRouteButtonImage(
-                        buttonOnVolumeView.currentImage?.withRenderingMode(imageRenderingMode),
-                        for: .normal
-                    )
-                    break;
-                }
-            }
-        }
-    }
-
-    func getImage(source: String?) -> UIImage? {
-        if source == nil {
-            return nil
-        }
-        let data : Data = Data(base64Encoded: source!, options: .ignoreUnknownCharacters)!
-
-        return UIImage(data:data)
+        return nil
     }
 
     override public func layoutSubviews() {
         super.layoutSubviews()
-
-        if _volumeView == nil {
-            embed()
+        
+        let currentSize = self.bounds.size
+        
+        // Only update if this is first layout or size changed
+        if routePickerView == nil {
+            // Setup audio session for AirPlay
+            setupAudioSession()
+            setupRoutePickerView()
+            lastSize = currentSize
+        } else if currentSize != lastSize {
+            // Update the view frame when parent size changes
+            updateViewFrame()
+            lastSize = currentSize
+        }
+    }
+    
+    private func setupAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+        } catch {
+            print("Error activating audio session: \(error)")
+        }
+    }
+    
+    private func updateViewFrame() {
+        if #available(iOS 11.0, *), let picker = routePickerView {
+            picker.frame = self.bounds
+            picker.setNeedsLayout()
+            picker.layoutIfNeeded()
+        }
+    }
+    
+    private func getViewFrame() -> CGRect {
+        // AVRoutePickerView will fill the parent view
+        if self.bounds.size.width > 0 && self.bounds.size.height > 0 {
+            return self.bounds
+        } else {
+            // Use a reasonable default size if parent has no size yet
+            let minSize = CGSize(width: 44, height: 44)
+            let frame = CGRect(origin: .zero, size: minSize)
+            self.frame = frame
+            return frame
         }
     }
 
-    private func embed() {
-        let volumeView = MPVolumeView()
-        volumeView.showsVolumeSlider = false;
-        volumeView.sizeToFit()
-        self._volumeView = volumeView
-        if (source != nil) {
-            setSource(self.source!)
+    private func setupRoutePickerView() {
+        if #available(iOS 11.0, *) {
+            let viewFrame = getViewFrame()
+            let picker = AVRoutePickerView(frame: viewFrame)
+            
+            // Set defaults
+            picker.backgroundColor = UIColor.clear
+            
+            self.routePickerView = picker
+            addSubview(picker)
+            
+            // If user provided a custom tint color
+            if let source = self.source {
+                setSource(source)
+            } else {
+                // Default tint
+                picker.tintColor = UIColor.white
+                picker.activeTintColor = UIColor.systemBlue
+            }
         }
-        addSubview(volumeView)
-        self.frame = volumeView.frame;
     }
 
-     override init(frame: CGRect) {
+    override init(frame: CGRect) {
         super.init(frame: frame)
+        
+        // Set background color to transparent
+        self.backgroundColor = UIColor.clear
+        
+        // Setup audio session for AirPlay
+        setupAudioSession()
     }
 
-     required init?(coder aDecoder: NSCoder) { fatalError("nope") }
-     
+    required init?(coder aDecoder: NSCoder) { 
+        fatalError("init(coder:) has not been implemented") 
+    }
 }
